@@ -5,6 +5,36 @@ import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import CircularJSON from "circular-json";
 
+const generateAccessAndRefreshToken = async (userId) => {
+  try {
+    // Verify userId
+    if (!userId) {
+      throw new ApiError(400, "Invalid userId");
+    }
+
+    // Find user
+    const user = await User.findById(userId);
+
+    // Verify user
+    if (!user) {
+      throw new ApiError(404, "User not found");
+    }
+
+    // Generate tokens
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
+
+    // Update refreshToken in the user document
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+
+    return { accessToken, refreshToken };
+  } catch (error) {
+    console.error("Error generating access and refresh tokens:", error);
+    throw new ApiError(500, "Something went wrong while generating tokens");
+  }
+};
+
 const registerUser = asyncHandler(async (req, res) => {
   //get data from frontend with the help of res.body or res. something
   //validate this data with the help of multer middleware-data should not be empty
@@ -93,31 +123,16 @@ const loginUser = asyncHandler(async (req, res) => {
   //send cookies
   //return res
 
-  const generateAccessAndRefreshToken = async (userId) => {
-    try {
-      const user = await User.findById(userId);
-      const accessToken = user.generateAccessToken();
-      const refreshToken = user.generateRefreshToken();
-
-      user.refreshToken = refreshToken;
-      await user.save({ valideBeforeSave: false });
-
-      return { accessToken, refreshToken };
-    } catch (error) {
-      throw new ApiError(500, "something went wrong while generating tokens");
-    }
-  };
-
   //step 1
   const { username, password, email } = req.body;
 
   //step 2
-  if (!username || !email) {
+  if (!username && !email) {
     throw new ApiError(400, "username or email required");
   }
 
   //step 3
-  const user = User.findOne({
+  const user = await User.findOne({
     $or: [{ username }, { email }],
   });
 
@@ -152,36 +167,41 @@ const loginUser = asyncHandler(async (req, res) => {
     .cookie("accessToken", accessToken, options)
     .cookie("refreshToken", refreshToken, options)
     .json(
-      new ApiResponse(200, {
-        user: loggedInUser,
-        accessToken,
-      }),
-      "User logged in successfully"
+      new ApiResponse(
+        200,
+        {
+          user: loggedInUser,
+          accessToken,
+          refreshToken,
+        },
+        "User logged in successfully"
+      )
     );
 });
 
-const logoutUser= asyncHandler(async(req,res)=>{
-  User.findByIdAndUpdate(
-    req.use._id,{
-      $set:{
-        refreshToken:undefined
-      }
+const logoutUser = asyncHandler(async (req, res) => {
+  await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      $set: {
+        refreshToken: undefined,
+      },
     },
     {
-      new:true
+      new: true,
     }
-  )
+  );
 
-  const options={
-    httpOnly:true,
-    secure:true
-  }
+  const options = {
+    httpOnly: true,
+    secure: true,
+  };
 
   return res
-  .status(200)
-  .clearcookie("accessToken", options)
-  .clearCookie("refreshToken",options)
-  .json(new ApiResponse(200,{},"User logged out"))
-})
+    .status(200)
+    .clearCookie("accessToken", options)
+    .clearCookie("refreshToken", options)
+    .json(new ApiResponse(200, {}, "User logged out"));
+});
 
-export { registerUser , loginUser, logoutUser};
+export { registerUser, loginUser, logoutUser };
